@@ -1,0 +1,122 @@
+﻿<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ניהול מתנות עובדים</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>ממשק ניהול</h1>
+    <a class="btn btn-secondary" href="/">חזרה לאתר</a>
+  </header>
+
+  <main class="container">
+    <section id="login-card" class="card login-card">
+      <h2>כניסת מנהל</h2>
+      <form id="login-form" class="inline-form">
+        <input id="admin-password" type="password" placeholder="סיסמה" required />
+        <button class="btn" type="submit">כניסה</button>
+      </form>
+      <p id="login-msg" class="message"></p>
+    </section>
+
+    <section id="admin-panel" class="hidden">
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="gifts">ניהול מתנות</button>
+        <button class="tab-btn" data-tab="selections">בחירות עובדים</button>
+        <button class="tab-btn" data-tab="settings">הגדרות מייל</button>
+        <button id="logout-btn" class="btn btn-danger">התנתקות</button>
+      </div>
+
+      <section id="tab-gifts" class="card tab-content active">
+        <h2>הוספת מתנה חדשה</h2>
+        <form id="add-gift-form" class="form-grid" enctype="multipart/form-data">
+          <label>
+            שם מתנה
+            <input name="name" type="text" required />
+          </label>
+
+          <label>
+            תיאור
+            <input name="description" type="text" />
+          </label>
+
+          <label>
+            כמות
+            <input name="quantity" type="number" min="0" value="0" required />
+          </label>
+
+          <label>
+            תמונה
+            <input name="image" type="file" accept="image/*" required />
+          </label>
+
+          <div class="full-width">
+            <button class="btn" type="submit">הוסף מתנה</button>
+          </div>
+        </form>
+
+        <h3>רשימת מתנות</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>תמונה</th>
+                <th>שם</th>
+                <th>תיאור</th>
+                <th>כמות</th>
+                <th>נבחרו</th>
+                <th>סטטוס</th>
+                <th>פעולה</th>
+              </tr>
+            </thead>
+            <tbody id="gifts-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tab-selections" class="card tab-content">
+        <h2>בחירות עובדים</h2>
+        <div class="actions-row">
+          <a href="/api/admin/export" class="btn" target="_blank" rel="noopener">ייצוא Excel</a>
+          <button id="refresh-selections" class="btn btn-secondary">רענון</button>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>שם עובד</th>
+                <th>אתר עבודה</th>
+                <th>מוקד</th>
+                <th>מתנה</th>
+                <th>תאריך</th>
+              </tr>
+            </thead>
+            <tbody id="selections-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tab-settings" class="card tab-content">
+        <h2>מייל לדוח</h2>
+        <form id="email-form" class="inline-form">
+          <input id="report-email" type="email" placeholder="name@company.com" required />
+          <button class="btn" type="submit">שמור מייל</button>
+        </form>
+
+        <div class="actions-row">
+          <button id="send-report-btn" class="btn">שלח עכשיו קובץ אקסל למייל</button>
+        </div>
+
+        <p class="muted">השליחה מתבצעת דרך SMTP שמוגדר בשרת.</p>
+        <p id="settings-msg" class="message"></p>
+      </section>
+    </section>
+  </main>
+
+  <script src="/admin.js"></script>
+</body>
+</html>
