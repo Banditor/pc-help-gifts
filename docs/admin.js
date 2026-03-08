@@ -39,7 +39,10 @@ async function renderGifts() {
           <td><img class="thumb" data-gift-image="${g.id}" src="https://placehold.co/120x120/e9eef5/5f6d7a?text=Gift" alt="${g.name}" /></td>
           <td>${g.name}</td>
           <td>${g.description || ""}</td>
-          <td>${g.quantity || 0}</td>
+          <td>
+            <input type="number" min="0" value="${Number(g.quantity || 0)}" data-qty="${g.id}" style="width:90px" />
+            <button class="btn btn-secondary" data-save-qty="${g.id}">שמור</button>
+          </td>
           <td>${g.selected}</td>
           <td>${g.remaining}</td>
           <td><button class="btn btn-danger" data-del="${g.id}">מחיקה</button></td>
@@ -66,26 +69,55 @@ async function renderGifts() {
       await renderAll();
     });
   });
+
+  giftsTable.querySelectorAll("[data-save-qty]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.getAttribute("data-save-qty");
+      const input = giftsTable.querySelector(`[data-qty="${id}"]`);
+      const nextQty = Number(input && input.value ? input.value : 0);
+      try {
+        await GPP.updateGiftQuantity(id, nextQty);
+        await renderAll();
+      } catch (err) {
+        setMsg(document.getElementById("giftMsg"), appErrorMessage(err), true);
+      }
+    });
+  });
 }
 
 async function renderSelections() {
-  const list = await GPP.listSelections();
+  const list = (await GPP.listSelections()).filter((s) => !s.is_cancelled);
   selectionsTable.innerHTML =
     list
       .map(
         (s) => `
         <tr>
-          <td>${s.employee_name || ""}</td>
+          <td>${s.employee_display_name || s.employee_name || ""}</td>
           <td>${s.employee_id || ""}</td>
           <td>${s.phone || ""}</td>
           <td>${s.work_site || ""}</td>
           <td>${s.department || ""}</td>
           <td>${(s.gifts && s.gifts.name) || ""}</td>
           <td>${new Date(s.created_at).toLocaleString("he-IL")}</td>
+          <td><button class="btn btn-danger" data-cancel-id="${s.employee_id || ""}">בטל בחירה</button></td>
         </tr>
       `
       )
-      .join("") || '<tr><td colspan="7">אין בחירות.</td></tr>';
+      .join("") || '<tr><td colspan="8">אין בחירות.</td></tr>';
+
+  selectionsTable.querySelectorAll("[data-cancel-id]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const employeeId = btn.getAttribute("data-cancel-id");
+      if (!employeeId) return;
+      if (!confirm("לבטל בחירה לעובד זה?")) return;
+      try {
+        await GPP.cancelSelectionByEmployeeId(employeeId);
+        await renderAll();
+      } catch (err) {
+        setMsg(loginMsg, appErrorMessage(err), true);
+      }
+    });
+  });
 }
 
 async function renderAll() {
@@ -157,11 +189,11 @@ giftForm.addEventListener("submit", async (e) => {
 
 document.getElementById("exportBtn").addEventListener("click", async () => {
   try {
-    const list = await GPP.listSelections();
+    const list = (await GPP.listSelections()).filter((s) => !s.is_cancelled);
     const rows = [["שם עובד", "תעודת זהות", "טלפון", "אתר עבודה", "מוקד", "מתנה", "תאריך"]];
     list.forEach((s) => {
       rows.push([
-        s.employee_name || "",
+        s.employee_display_name || s.employee_name || "",
         s.employee_id || "",
         s.phone || "",
         s.work_site || "",

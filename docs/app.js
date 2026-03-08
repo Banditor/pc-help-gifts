@@ -7,6 +7,7 @@
     apikey: SUPABASE_ANON_KEY,
     Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
   };
+  const CANCEL_MARKER = "__CANCELLED__";
 
   let schemaMode = null;
 
@@ -114,6 +115,23 @@
     return `${name} [ID:${employeeId};TEL:${phone}]`;
   }
 
+  function employeeKey(row) {
+    const id = String(row.employee_id || "").trim();
+    if (id) return `id:${id}`;
+    const name = String(row.employee_name || row.employee_display_name || "").trim();
+    return `name:${name}`;
+  }
+
+  function withLatestSelectionOnly(rows) {
+    const sorted = [...rows].sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+    const map = new Map();
+    for (const row of sorted) {
+      const key = employeeKey(row);
+      if (!map.has(key)) map.set(key, row);
+    }
+    return [...map.values()];
+  }
+
   async function getSchemaMode() {
     if (schemaMode) return schemaMode;
     try {
@@ -152,17 +170,19 @@
       const data = await rest(
         `/gift_selections?select=id,employee_name,employee_id,phone,work_site,department,gift_id,created_at,gifts(name)&order=created_at.desc`
       );
-      return (Array.isArray(data) ? data : []).map((row) => ({
+      const normalized = (Array.isArray(data) ? data : []).map((row) => ({
         ...row,
         employee_display_name: row.employee_name,
+        is_cancelled: row.department === CANCEL_MARKER,
       }));
+      return withLatestSelectionOnly(normalized);
     }
 
     const legacyData = await rest(
       `/gift_selections?select=id,employee_name,work_site,department,gift_id,created_at,gifts(name)&order=created_at.desc`
     );
 
-    return (Array.isArray(legacyData) ? legacyData : []).map((row) => {
+    const normalized = (Array.isArray(legacyData) ? legacyData : []).map((row) => {
       const parsed = parseLegacyIdentity(row.employee_name);
       return {
         ...row,
@@ -170,8 +190,10 @@
         employee_display_name: parsed.name,
         employee_id: parsed.employeeId,
         phone: parsed.phone,
+        is_cancelled: row.department === CANCEL_MARKER,
       };
     });
+    return withLatestSelectionOnly(normalized);
   }
 
   async function listGiftAvailability() {
@@ -179,6 +201,7 @@
 
     const counts = {};
     for (const row of selections) {
+      if (row.is_cancelled) continue;
       counts[row.gift_id] = (counts[row.gift_id] || 0) + 1;
     }
 
@@ -234,7 +257,7 @@
     if (phone.length < 8) throw toAppError("INVALID_PHONE");
 
     const selections = await listSelections();
-    if (selections.some((s) => String(s.employee_id || "") === employeeId)) {
+    if (selections.some((s) => !s.is_cancelled && String(s.employee_id || "") === employeeId)) {
       throw toAppError("DUPLICATE_EMPLOYEE");
     }
 
@@ -307,10 +330,57 @@
     });
   }
 
-  async function clearSelections() {
-    await rest(`/gift_selections?id=neq.00000000-0000-0000-0000-000000000000`, {
-      method: "DELETE",
+  async function cancelSelectionByEmployeeId(employeeId) {
+    const normId = normalizeId(employeeId);
+    if (!normId) return;
+    const selections = await listSelections();
+    const latest = selections.find((s) => String(s.employee_id || "") === normId && !s.is_cancelled);
+    if (!latest) return;
+
+    const mode = await getSchemaMode();
+    const baseBody = {
+      work_site: latest.work_site || "",
+      department: CANCEL_MARKER,
+      gift_id: latest.gift_id,
+    };
+    const body =
+      mode === "modern"
+        ? {
+            ...baseBody,
+            employee_name: latest.employee_display_name || latest.employee_name || "",
+            employee_id: normId,
+            phone: normalizePhone(latest.phone || ""),
+          }
+        : {
+            ...baseBody,
+            employee_name: buildLegacyEmployeeName(
+              latest.employee_display_name || latest.employee_name || "",
+              normId,
+              normalizePhone(latest.phone || "")
+            ),
+          };
+
+    await rest(`/gift_selections`, {
+      method: "POST",
       headers: { Prefer: "return=minimal" },
+      body,
+    });
+  }
+
+  async function clearSelections() {
+    const selections = await listSelections();
+    const active = selections.filter((s) => !s.is_cancelled && String(s.employee_id || "").trim());
+    for (const row of active) {
+      // eslint-disable-next-line no-await-in-loop
+      await cancelSelectionByEmployeeId(row.employee_id);
+    }
+  }
+
+  async function updateGiftQuantity(id, quantity) {
+    await rest(`/gifts?id=eq.${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: { quantity: Math.max(0, Number(quantity || 0)) },
     });
   }
 
@@ -338,7 +408,9 @@
     submitSelection,
     addGift,
     deleteGift,
+    cancelSelectionByEmployeeId,
     clearSelections,
+    updateGiftQuantity,
     downloadCsv,
   };
 })();
