@@ -30,7 +30,7 @@ async function renderGifts() {
         const disabled = g.remaining <= 0;
         return `
           <label class="gift-card" style="opacity:${disabled ? "0.65" : "1"};">
-            <img class="gift-image" src="${g.image_url || "https://placehold.co/600x400/e9eef5/5f6d7a?text=Gift"}" alt="${g.name}" />
+            <img class="gift-image" data-gift-image="${g.id}" src="https://placehold.co/600x400/e9eef5/5f6d7a?text=Gift" alt="${g.name}" />
             <div class="gift-content">
               <input type="radio" name="giftId" value="${g.id}" ${disabled ? "disabled" : ""} />
               <h4 class="gift-title">${g.name}</h4>
@@ -40,6 +40,17 @@ async function renderGifts() {
           </label>`;
       })
       .join("");
+
+    list.forEach(async (gift) => {
+      try {
+        const url = await GPP.getGiftImageUrl(gift.id);
+        if (!url) return;
+        const img = giftsGrid.querySelector(`[data-gift-image="${gift.id}"]`);
+        if (img) img.src = url;
+      } catch (_) {
+        // keep placeholder
+      }
+    });
   } catch (err) {
     setMsg(appErrorMessage(err), true);
   }

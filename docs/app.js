@@ -49,29 +49,46 @@
       init.headers["Content-Type"] = "application/json";
     }
 
-    const res = await fetch(`${REST_BASE}${path}`, init);
+    const timeoutMs = options.timeoutMs || 10000;
+    const retries = options.retries ?? 1;
+    let lastError = null;
 
-    if (!res.ok) {
-      let payload = null;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        payload = await res.json();
-      } catch (_) {
-        payload = { message: await res.text() };
+        const res = await fetch(`${REST_BASE}${path}`, { ...init, signal: controller.signal });
+        clearTimeout(timer);
+
+        if (!res.ok) {
+          let payload = null;
+          try {
+            payload = await res.json();
+          } catch (_) {
+            payload = { message: await res.text() };
+          }
+          const e = new Error(payload?.message || payload?.hint || `HTTP ${res.status}`);
+          e.status = res.status;
+          e.payload = payload;
+          throw e;
+        }
+
+        if (method === "HEAD") return null;
+        const text = await res.text();
+        if (!text) return null;
+        try {
+          return JSON.parse(text);
+        } catch {
+          return text;
+        }
+      } catch (error) {
+        clearTimeout(timer);
+        lastError = error;
+        if (attempt === retries) break;
       }
-      const e = new Error(payload?.message || payload?.hint || `HTTP ${res.status}`);
-      e.status = res.status;
-      e.payload = payload;
-      throw e;
     }
 
-    if (method === "HEAD") return null;
-    const text = await res.text();
-    if (!text) return null;
-    try {
-      return JSON.parse(text);
-    } catch {
-      return text;
-    }
+    throw lastError || new Error("Network request failed");
   }
 
   function isMissingColumnError(error) {
@@ -83,9 +100,18 @@
 
   async function listGifts() {
     const data = await rest(
-      `/gifts?select=id,name,description,image_url,quantity,active,created_at&active=eq.true&order=created_at.asc`
+      `/gifts?select=id,name,description,quantity,active,created_at&active=eq.true&order=created_at.asc`
     );
     return Array.isArray(data) ? data : [];
+  }
+
+  async function getGiftImageUrl(giftId) {
+    const rows = await rest(`/gifts?select=image_url&id=eq.${encodeURIComponent(giftId)}&limit=1`, {
+      timeoutMs: 12000,
+      retries: 0,
+    });
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    return rows[0].image_url || null;
   }
 
   async function listSelections() {
@@ -264,6 +290,7 @@
 
   window.GPP = {
     listGifts,
+    getGiftImageUrl,
     listSelections,
     listGiftAvailability,
     submitSelection,

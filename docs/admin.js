@@ -37,7 +37,7 @@ async function renderGifts() {
       .map(
         (g) => `
         <tr>
-          <td><img class="thumb" src="${g.image_url || "https://placehold.co/120x120/e9eef5/5f6d7a?text=Gift"}" alt="${g.name}" /></td>
+          <td><img class="thumb" data-gift-image="${g.id}" src="https://placehold.co/120x120/e9eef5/5f6d7a?text=Gift" alt="${g.name}" /></td>
           <td>${g.name}</td>
           <td>${g.description || ""}</td>
           <td>${g.quantity || 0}</td>
@@ -48,6 +48,17 @@ async function renderGifts() {
       `
       )
       .join("") || '<tr><td colspan="7">אין מתנות.</td></tr>';
+
+  list.forEach(async (gift) => {
+    try {
+      const url = await GPP.getGiftImageUrl(gift.id);
+      if (!url) return;
+      const img = giftsTable.querySelector(`[data-gift-image="${gift.id}"]`);
+      if (img) img.src = url;
+    } catch (_) {
+      // keep placeholder
+    }
+  });
 
   giftsTable.querySelectorAll("[data-del]").forEach((btn) => {
     btn.addEventListener("click", async () => {
