@@ -2,3 +2,5 @@
 .env
 data.db
 uploads/
+*.xlsx
+~$*.xlsx
