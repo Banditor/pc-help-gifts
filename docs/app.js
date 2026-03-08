@@ -8,6 +8,8 @@
     Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
   };
 
+  let schemaMode = null;
+
   async function safeUnregisterServiceWorkers() {
     try {
       if (!("serviceWorker" in navigator)) return;
@@ -98,6 +100,35 @@
     return code === "42703" || msg.includes("employee_id") || msg.includes("phone");
   }
 
+  function parseLegacyIdentity(rawName) {
+    const raw = String(rawName || "");
+    const m = raw.match(/\s*\[ID:(\d+);TEL:(\d+)\]\s*$/);
+    return {
+      name: raw.replace(/\s*\[ID:\d+;TEL:\d+\]\s*$/, "").trim(),
+      employeeId: m ? m[1] : "",
+      phone: m ? m[2] : "",
+    };
+  }
+
+  function buildLegacyEmployeeName(name, employeeId, phone) {
+    return `${name} [ID:${employeeId};TEL:${phone}]`;
+  }
+
+  async function getSchemaMode() {
+    if (schemaMode) return schemaMode;
+    try {
+      await rest(`/gift_selections?select=employee_id,phone&limit=1`, { timeoutMs: 7000, retries: 0 });
+      schemaMode = "modern";
+    } catch (error) {
+      if (isMissingColumnError(error)) {
+        schemaMode = "legacy";
+      } else {
+        throw error;
+      }
+    }
+    return schemaMode;
+  }
+
   async function listGifts() {
     const data = await rest(
       `/gifts?select=id,name,description,quantity,active,created_at&active=eq.true&order=created_at.asc`
@@ -115,25 +146,36 @@
   }
 
   async function listSelections() {
-    try {
+    const mode = await getSchemaMode();
+
+    if (mode === "modern") {
       const data = await rest(
         `/gift_selections?select=id,employee_name,employee_id,phone,work_site,department,gift_id,created_at,gifts(name)&order=created_at.desc`
       );
-      return Array.isArray(data) ? data : [];
-    } catch (error) {
-      if (isMissingColumnError(error)) throw toAppError("MIGRATION_REQUIRED", error);
-      throw error;
+      return (Array.isArray(data) ? data : []).map((row) => ({
+        ...row,
+        employee_display_name: row.employee_name,
+      }));
     }
+
+    const legacyData = await rest(
+      `/gift_selections?select=id,employee_name,work_site,department,gift_id,created_at,gifts(name)&order=created_at.desc`
+    );
+
+    return (Array.isArray(legacyData) ? legacyData : []).map((row) => {
+      const parsed = parseLegacyIdentity(row.employee_name);
+      return {
+        ...row,
+        employee_name: parsed.name,
+        employee_display_name: parsed.name,
+        employee_id: parsed.employeeId,
+        phone: parsed.phone,
+      };
+    });
   }
 
   async function listGiftAvailability() {
-    const [gifts, selections] = await Promise.all([
-      listGifts(),
-      listSelections().catch((err) => {
-        if (err.kind === "MIGRATION_REQUIRED") return [];
-        throw err;
-      }),
-    ]);
+    const [gifts, selections] = await Promise.all([listGifts(), listSelections()]);
 
     const counts = {};
     for (const row of selections) {
@@ -191,15 +233,9 @@
     if (employeeId.length < 5) throw toAppError("INVALID_ID");
     if (phone.length < 8) throw toAppError("INVALID_PHONE");
 
-    try {
-      const exists = await rest(`/gift_selections?select=id&employee_id=eq.${encodeURIComponent(employeeId)}&limit=1`);
-      if (Array.isArray(exists) && exists.length > 0) {
-        throw toAppError("DUPLICATE_EMPLOYEE");
-      }
-    } catch (error) {
-      if (error.kind) throw error;
-      if (isMissingColumnError(error)) throw toAppError("MIGRATION_REQUIRED", error);
-      throw error;
+    const selections = await listSelections();
+    if (selections.some((s) => String(s.employee_id || "") === employeeId)) {
+      throw toAppError("DUPLICATE_EMPLOYEE");
     }
 
     const giftRows = await rest(`/gifts?select=id,quantity,active&id=eq.${encodeURIComponent(payload.giftId)}&active=eq.true&limit=1`);
@@ -213,25 +249,31 @@
       throw toAppError("OUT_OF_STOCK");
     }
 
-    try {
-      await rest(`/gift_selections`, {
-        method: "POST",
-        headers: { Prefer: "return=minimal" },
-        body: {
-          employee_name: payload.employeeName,
-          employee_id: employeeId,
-          phone,
-          work_site: payload.workSite,
-          department: payload.department,
-          gift_id: payload.giftId,
-        },
-      });
-    } catch (error) {
-      const code = String(error.payload?.code || "");
-      if (code === "23505") throw toAppError("DUPLICATE_EMPLOYEE", error);
-      if (isMissingColumnError(error)) throw toAppError("MIGRATION_REQUIRED", error);
-      throw error;
-    }
+    const mode = await getSchemaMode();
+    const baseBody = {
+      work_site: payload.workSite,
+      department: payload.department,
+      gift_id: payload.giftId,
+    };
+
+    const body =
+      mode === "modern"
+        ? {
+            ...baseBody,
+            employee_name: payload.employeeName,
+            employee_id: employeeId,
+            phone,
+          }
+        : {
+            ...baseBody,
+            employee_name: buildLegacyEmployeeName(payload.employeeName, employeeId, phone),
+          };
+
+    await rest(`/gift_selections`, {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body,
+    });
   }
 
   async function addGift(payload) {

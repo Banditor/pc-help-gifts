@@ -24,7 +24,6 @@ function isAuth() {
 
 function appErrorMessage(err) {
   if (!err) return "אירעה שגיאה. נסו שוב.";
-  if (err.kind === "MIGRATION_REQUIRED") return "חסרה הגדרת DB לתעודת זהות/טלפון. יש להריץ מיגרציה.";
   if (err.kind === "IMAGE_PROCESS_FAILED") return "שגיאה בעיבוד התמונה. נסה תמונה קטנה יותר או בפורמט JPG/PNG.";
   if (err.message) return `שגיאה: ${err.message}`;
   return "אירעה שגיאה בפעולה.";

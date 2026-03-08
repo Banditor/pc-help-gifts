@@ -13,7 +13,6 @@ function appErrorMessage(err) {
   if (err.kind === "OUT_OF_STOCK") return "המתנה אזלה מהמלאי, בחרו מתנה אחרת.";
   if (err.kind === "INVALID_ID") return "מספר תעודת הזהות לא תקין.";
   if (err.kind === "INVALID_PHONE") return "מספר הטלפון לא תקין.";
-  if (err.kind === "MIGRATION_REQUIRED") return "חסרה הגדרת DB לתעודת זהות/טלפון. יש להריץ את המיגרציה.";
   return "אירעה שגיאה בשמירה. נסו שוב.";
 }
 
