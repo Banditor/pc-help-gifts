@@ -1,8 +1,35 @@
 ﻿(function () {
   const SUPABASE_URL = "https://vjllsgtranpbhqqvtfms.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZqbGxzZ3RyYW5wYmhxcXZ0Zm1zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI5NzY5NDMsImV4cCI6MjA4ODU1Mjk0M30.uoKT4TJ3tod82O3WywVaCV-N4Gl_c0pLPvI_Z8L60xo";
+  const REST_BASE = `${SUPABASE_URL}/rest/v1`;
 
-  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const defaultHeaders = {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+  };
+
+  async function safeUnregisterServiceWorkers() {
+    try {
+      if (!("serviceWorker" in navigator)) return;
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+      if (window.caches && caches.keys) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  safeUnregisterServiceWorkers();
+
+  function toAppError(kind, original) {
+    const err = new Error(kind);
+    err.kind = kind;
+    err.original = original || null;
+    return err;
+  }
 
   function normalizeId(value) {
     return String(value || "").replace(/\D/g, "");
@@ -12,11 +39,90 @@
     return String(value || "").replace(/\D/g, "");
   }
 
-  function toAppError(kind, original) {
-    const err = new Error(kind);
-    err.kind = kind;
-    err.original = original || null;
-    return err;
+  async function rest(path, options = {}) {
+    const method = options.method || "GET";
+    const headers = { ...defaultHeaders, ...(options.headers || {}) };
+    const init = { method, headers, cache: "no-store" };
+
+    if (options.body !== undefined) {
+      init.body = JSON.stringify(options.body);
+      init.headers["Content-Type"] = "application/json";
+    }
+
+    const res = await fetch(`${REST_BASE}${path}`, init);
+
+    if (!res.ok) {
+      let payload = null;
+      try {
+        payload = await res.json();
+      } catch (_) {
+        payload = { message: await res.text() };
+      }
+      const e = new Error(payload?.message || payload?.hint || `HTTP ${res.status}`);
+      e.status = res.status;
+      e.payload = payload;
+      throw e;
+    }
+
+    if (method === "HEAD") return null;
+    const text = await res.text();
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  }
+
+  function isMissingColumnError(error) {
+    if (!error) return false;
+    const msg = String(error.message || error.payload?.message || "");
+    const code = String(error.payload?.code || "");
+    return code === "42703" || msg.includes("employee_id") || msg.includes("phone");
+  }
+
+  async function listGifts() {
+    const data = await rest(
+      `/gifts?select=id,name,description,image_url,quantity,active,created_at&active=eq.true&order=created_at.asc`
+    );
+    return Array.isArray(data) ? data : [];
+  }
+
+  async function listSelections() {
+    try {
+      const data = await rest(
+        `/gift_selections?select=id,employee_name,employee_id,phone,work_site,department,gift_id,created_at,gifts(name)&order=created_at.desc`
+      );
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      if (isMissingColumnError(error)) throw toAppError("MIGRATION_REQUIRED", error);
+      throw error;
+    }
+  }
+
+  async function listGiftAvailability() {
+    const [gifts, selections] = await Promise.all([
+      listGifts(),
+      listSelections().catch((err) => {
+        if (err.kind === "MIGRATION_REQUIRED") return [];
+        throw err;
+      }),
+    ]);
+
+    const counts = {};
+    for (const row of selections) {
+      counts[row.gift_id] = (counts[row.gift_id] || 0) + 1;
+    }
+
+    return gifts.map((gift) => {
+      const selected = counts[gift.id] || 0;
+      const quantity = Number(gift.quantity || 0);
+      return {
+        ...gift,
+        selected,
+        remaining: Math.max(0, quantity - selected),
+      };
+    });
   }
 
   function fileToOptimizedDataUrl(file) {
@@ -52,60 +158,6 @@
     });
   }
 
-  function isMissingColumnError(error) {
-    if (!error) return false;
-    return error.code === "42703" || String(error.message || "").includes("employee_id");
-  }
-
-  async function listGifts() {
-    const { data, error } = await supabaseClient
-      .from("gifts")
-      .select("id,name,description,image_url,quantity,active,created_at")
-      .eq("active", true)
-      .order("created_at", { ascending: true });
-
-    if (error) throw error;
-    return data || [];
-  }
-
-  async function listSelections() {
-    const { data, error } = await supabaseClient
-      .from("gift_selections")
-      .select("id,employee_name,employee_id,phone,work_site,department,gift_id,created_at,gifts(name)")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      if (isMissingColumnError(error)) {
-        throw toAppError("MIGRATION_REQUIRED", error);
-      }
-      throw error;
-    }
-
-    return data || [];
-  }
-
-  async function listGiftAvailability() {
-    const [gifts, selections] = await Promise.all([listGifts(), listSelections().catch((err) => {
-      if (err.kind === "MIGRATION_REQUIRED") return [];
-      throw err;
-    })]);
-
-    const counts = {};
-    for (const row of selections) {
-      counts[row.gift_id] = (counts[row.gift_id] || 0) + 1;
-    }
-
-    return gifts.map((gift) => {
-      const selected = counts[gift.id] || 0;
-      const quantity = Number(gift.quantity || 0);
-      return {
-        ...gift,
-        selected,
-        remaining: Math.max(0, quantity - selected),
-      };
-    });
-  }
-
   async function submitSelection(payload) {
     const employeeId = normalizeId(payload.employeeId);
     const phone = normalizePhone(payload.phone);
@@ -113,60 +165,46 @@
     if (employeeId.length < 5) throw toAppError("INVALID_ID");
     if (phone.length < 8) throw toAppError("INVALID_PHONE");
 
-    const { data: exists, error: checkError } = await supabaseClient
-      .from("gift_selections")
-      .select("id")
-      .eq("employee_id", employeeId)
-      .limit(1);
-
-    if (checkError) {
-      if (isMissingColumnError(checkError)) {
-        throw toAppError("MIGRATION_REQUIRED", checkError);
+    try {
+      const exists = await rest(`/gift_selections?select=id&employee_id=eq.${encodeURIComponent(employeeId)}&limit=1`);
+      if (Array.isArray(exists) && exists.length > 0) {
+        throw toAppError("DUPLICATE_EMPLOYEE");
       }
-      throw checkError;
+    } catch (error) {
+      if (error.kind) throw error;
+      if (isMissingColumnError(error)) throw toAppError("MIGRATION_REQUIRED", error);
+      throw error;
     }
 
-    if (exists && exists.length > 0) {
-      throw toAppError("DUPLICATE_EMPLOYEE");
-    }
+    const giftRows = await rest(`/gifts?select=id,quantity,active&id=eq.${encodeURIComponent(payload.giftId)}&active=eq.true&limit=1`);
+    const gift = Array.isArray(giftRows) ? giftRows[0] : null;
+    if (!gift) throw toAppError("GIFT_NOT_FOUND");
 
-    const { data: gift, error: giftError } = await supabaseClient
-      .from("gifts")
-      .select("id,quantity,active")
-      .eq("id", payload.giftId)
-      .eq("active", true)
-      .single();
+    const selectedRows = await rest(`/gift_selections?select=id&gift_id=eq.${encodeURIComponent(payload.giftId)}`);
+    const selectedCount = Array.isArray(selectedRows) ? selectedRows.length : 0;
 
-    if (giftError || !gift) throw toAppError("GIFT_NOT_FOUND", giftError);
-
-    const { count, error: countError } = await supabaseClient
-      .from("gift_selections")
-      .select("id", { head: true, count: "exact" })
-      .eq("gift_id", payload.giftId);
-
-    if (countError) throw countError;
-
-    if ((count || 0) >= Number(gift.quantity || 0)) {
+    if (selectedCount >= Number(gift.quantity || 0)) {
       throw toAppError("OUT_OF_STOCK");
     }
 
-    const insertPayload = {
-      employee_name: payload.employeeName,
-      employee_id: employeeId,
-      phone,
-      work_site: payload.workSite,
-      department: payload.department,
-      gift_id: payload.giftId,
-    };
-
-    const { error: insertError } = await supabaseClient
-      .from("gift_selections")
-      .insert(insertPayload);
-
-    if (insertError) {
-      if (insertError.code === "23505") throw toAppError("DUPLICATE_EMPLOYEE", insertError);
-      if (isMissingColumnError(insertError)) throw toAppError("MIGRATION_REQUIRED", insertError);
-      throw insertError;
+    try {
+      await rest(`/gift_selections`, {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: {
+          employee_name: payload.employeeName,
+          employee_id: employeeId,
+          phone,
+          work_site: payload.workSite,
+          department: payload.department,
+          gift_id: payload.giftId,
+        },
+      });
+    } catch (error) {
+      const code = String(error.payload?.code || "");
+      if (code === "23505") throw toAppError("DUPLICATE_EMPLOYEE", error);
+      if (isMissingColumnError(error)) throw toAppError("MIGRATION_REQUIRED", error);
+      throw error;
     }
   }
 
@@ -181,25 +219,31 @@
       }
     }
 
-    const { error } = await supabaseClient.from("gifts").insert({
-      name: payload.name,
-      description: payload.description || null,
-      quantity: Number(payload.quantity || 0),
-      image_url: imageUrl,
-      active: true,
+    await rest(`/gifts`, {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: {
+        name: payload.name,
+        description: payload.description || null,
+        quantity: Number(payload.quantity || 0),
+        image_url: imageUrl,
+        active: true,
+      },
     });
-
-    if (error) throw error;
   }
 
   async function deleteGift(id) {
-    const { error } = await supabaseClient.from("gifts").delete().eq("id", id);
-    if (error) throw error;
+    await rest(`/gifts?id=eq.${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
+    });
   }
 
   async function clearSelections() {
-    const { error } = await supabaseClient.from("gift_selections").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    if (error) throw error;
+    await rest(`/gift_selections?id=neq.00000000-0000-0000-0000-000000000000`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
+    });
   }
 
   function downloadCsv(filename, rows) {
