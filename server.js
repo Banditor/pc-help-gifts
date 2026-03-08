@@ -12,7 +12,7 @@ const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Rn123456';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'E123123';
 const ADMIN_SESSION_TOKEN = process.env.ADMIN_SESSION_TOKEN || 'gift-admin-session';
 const DB_PATH = path.join(__dirname, 'data.db');
 const upload = multer({ storage: multer.memoryStorage() });
