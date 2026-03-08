@@ -11,7 +11,7 @@
     <div class="topbar-inner">
       <div>
         <div class="brand">ממשק ניהול</div>
-        <div class="muted">סיסמה: E123123</div>
+        <div class="muted">ניהול מלאי, בחירות עובדים וייצוא נתונים</div>
       </div>
       <a class="btn btn-secondary" href="index.html">חזרה למסך העובדים</a>
     </div>
@@ -100,6 +100,8 @@
               <thead>
                 <tr>
                   <th>שם עובד</th>
+                  <th>ת"ז</th>
+                  <th>טלפון</th>
                   <th>אתר עבודה</th>
                   <th>מוקד</th>
                   <th>מתנה</th>
@@ -114,174 +116,8 @@
     </section>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
-  <script>
-    const ADMIN_PASSWORD = "E123123";
-    const AUTH_KEY = "gpp_admin_auth";
-
-    const loginShell = document.getElementById("loginShell");
-    const adminPanel = document.getElementById("adminPanel");
-    const loginForm = document.getElementById("loginForm");
-    const loginMsg = document.getElementById("loginMsg");
-    const giftForm = document.getElementById("giftForm");
-    const giftsTable = document.getElementById("giftsTable");
-    const selectionsTable = document.getElementById("selectionsTable");
-
-    function setMsg(el, text, isError) {
-      el.textContent = text;
-      el.className = "message " + (text ? (isError ? "error" : "success") : "");
-    }
-
-    function setAuth(v) {
-      localStorage.setItem(AUTH_KEY, v ? "1" : "0");
-    }
-
-    function isAuth() {
-      return localStorage.getItem(AUTH_KEY) === "1";
-    }
-
-    function applyAuthView() {
-      const ok = isAuth();
-      loginShell.style.display = ok ? "none" : "grid";
-      adminPanel.style.display = ok ? "block" : "none";
-      if (ok) {
-        renderGifts();
-        renderSelections();
-      }
-    }
-
-    loginForm.addEventListener("submit", (e) => {
-      e.preventDefault();
-      const val = document.getElementById("adminPassword").value;
-      if (val === ADMIN_PASSWORD) {
-        setAuth(true);
-        setMsg(loginMsg, "כניסה הצליחה.", false);
-        applyAuthView();
-      } else {
-        setMsg(loginMsg, "סיסמה שגויה.", true);
-      }
-    });
-
-    document.getElementById("logoutBtn").addEventListener("click", () => {
-      setAuth(false);
-      applyAuthView();
-    });
-
-    document.querySelectorAll(".tab-btn[data-tab]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".tab-btn[data-tab]").forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-        const tab = btn.getAttribute("data-tab");
-        document.querySelectorAll(".tab-panel").forEach((p) => {
-          p.classList.toggle("active", p.getAttribute("data-panel") === tab);
-        });
-      });
-    });
-
-    function fileToDataUrl(file) {
-      return new Promise((resolve, reject) => {
-        if (!file) return resolve("");
-        const r = new FileReader();
-        r.onload = () => resolve(String(r.result || ""));
-        r.onerror = reject;
-        r.readAsDataURL(file);
-      });
-    }
-
-    async function addGift(e) {
-      e.preventDefault();
-      const name = document.getElementById("giftName").value.trim();
-      const description = document.getElementById("giftDescription").value.trim();
-      const quantity = Number(document.getElementById("giftQty").value || 0);
-      const file = document.getElementById("giftImage").files[0];
-
-      if (!name) {
-        setMsg(document.getElementById("giftMsg"), "שם מתנה הוא שדה חובה.", true);
-        return;
-      }
-
-      const imageDataUrl = await fileToDataUrl(file);
-      const list = GPP.gifts();
-      list.push({
-        id: GPP.uid(),
-        name,
-        description,
-        quantity: Math.max(0, quantity),
-        imageDataUrl,
-        createdAt: new Date().toISOString(),
-      });
-      GPP.saveGifts(list);
-      giftForm.reset();
-      document.getElementById("giftQty").value = "0";
-      setMsg(document.getElementById("giftMsg"), "המתנה נוספה.", false);
-      renderGifts();
-    }
-
-    function deleteGift(id) {
-      if (!confirm("למחוק מתנה זו?")) return;
-      const gifts = GPP.gifts().filter((g) => g.id !== id);
-      const selections = GPP.selections().filter((s) => s.giftId !== id);
-      GPP.saveGifts(gifts);
-      GPP.saveSelections(selections);
-      renderGifts();
-      renderSelections();
-    }
-
-    function renderGifts() {
-      const list = GPP.giftWithAvailability();
-      giftsTable.innerHTML = list.map((g) => `
-        <tr>
-          <td><img class="thumb" src="${g.imageDataUrl || "https://placehold.co/120x120/e9eef5/5f6d7a?text=Gift"}" alt="${g.name}" /></td>
-          <td>${g.name}</td>
-          <td>${g.description || ""}</td>
-          <td>${g.quantity}</td>
-          <td>${g.selected}</td>
-          <td>${g.remaining}</td>
-          <td><button class="btn btn-danger" data-del="${g.id}">מחיקה</button></td>
-        </tr>
-      `).join("") || '<tr><td colspan="7">אין מתנות.</td></tr>';
-
-      giftsTable.querySelectorAll("[data-del]").forEach((btn) => {
-        btn.addEventListener("click", () => deleteGift(btn.getAttribute("data-del")));
-      });
-    }
-
-    function renderSelections() {
-      const list = GPP.selections().slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-      selectionsTable.innerHTML = list.map((s) => `
-        <tr>
-          <td>${s.employeeName}</td>
-          <td>${s.workSite}</td>
-          <td>${s.department}</td>
-          <td>${s.giftName}</td>
-          <td>${new Date(s.createdAt).toLocaleString("he-IL")}</td>
-        </tr>
-      `).join("") || '<tr><td colspan="5">אין בחירות.</td></tr>';
-    }
-
-    document.getElementById("exportBtn").addEventListener("click", () => {
-      const rows = [["שם עובד", "אתר עבודה", "מוקד", "מתנה", "תאריך"]];
-      GPP.selections().forEach((s) => {
-        rows.push([
-          s.employeeName,
-          s.workSite,
-          s.department,
-          s.giftName,
-          new Date(s.createdAt).toLocaleString("he-IL"),
-        ]);
-      });
-      GPP.downloadCsv("gift-selections.csv", rows);
-    });
-
-    document.getElementById("clearSelectionsBtn").addEventListener("click", () => {
-      if (!confirm("למחוק את כל הבחירות?")) return;
-      GPP.saveSelections([]);
-      renderSelections();
-      renderGifts();
-    });
-
-    giftForm.addEventListener("submit", addGift);
-    applyAuthView();
-  </script>
+  <script src="admin.js"></script>
 </body>
 </html>

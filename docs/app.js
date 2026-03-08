@@ -1,67 +1,181 @@
 ﻿(function () {
-  const GIFTS_KEY = "gpp_gifts_v1";
-  const SELECTIONS_KEY = "gpp_selections_v1";
+  const SUPABASE_URL = "https://vjllsgtranpbhqqvtfms.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZqbGxzZ3RyYW5wYmhxcXZ0Zm1zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI5NzY5NDMsImV4cCI6MjA4ODU1Mjk0M30.uoKT4TJ3tod82O3WywVaCV-N4Gl_c0pLPvI_Z8L60xo";
 
-  function read(key, fallback) {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : fallback;
-    } catch {
-      return fallback;
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  function normalizeId(value) {
+    return String(value || "").replace(/\D/g, "");
+  }
+
+  function normalizePhone(value) {
+    return String(value || "").replace(/\D/g, "");
+  }
+
+  function toAppError(kind, original) {
+    const err = new Error(kind);
+    err.kind = kind;
+    err.original = original || null;
+    return err;
+  }
+
+  function isMissingColumnError(error) {
+    if (!error) return false;
+    return error.code === "42703" || String(error.message || "").includes("employee_id");
+  }
+
+  async function listGifts() {
+    const { data, error } = await supabaseClient
+      .from("gifts")
+      .select("id,name,description,image_url,quantity,active,created_at")
+      .eq("active", true)
+      .order("created_at", { ascending: true });
+
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function listSelections() {
+    const { data, error } = await supabaseClient
+      .from("gift_selections")
+      .select("id,employee_name,employee_id,phone,work_site,department,gift_id,created_at,gifts(name)")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      if (isMissingColumnError(error)) {
+        throw toAppError("MIGRATION_REQUIRED", error);
+      }
+      throw error;
+    }
+
+    return data || [];
+  }
+
+  async function listGiftAvailability() {
+    const [gifts, selections] = await Promise.all([listGifts(), listSelections().catch((err) => {
+      if (err.kind === "MIGRATION_REQUIRED") return [];
+      throw err;
+    })]);
+
+    const counts = {};
+    for (const row of selections) {
+      counts[row.gift_id] = (counts[row.gift_id] || 0) + 1;
+    }
+
+    return gifts.map((gift) => {
+      const selected = counts[gift.id] || 0;
+      const quantity = Number(gift.quantity || 0);
+      return {
+        ...gift,
+        selected,
+        remaining: Math.max(0, quantity - selected),
+      };
+    });
+  }
+
+  async function submitSelection(payload) {
+    const employeeId = normalizeId(payload.employeeId);
+    const phone = normalizePhone(payload.phone);
+
+    if (employeeId.length < 5) throw toAppError("INVALID_ID");
+    if (phone.length < 8) throw toAppError("INVALID_PHONE");
+
+    const { data: exists, error: checkError } = await supabaseClient
+      .from("gift_selections")
+      .select("id")
+      .eq("employee_id", employeeId)
+      .limit(1);
+
+    if (checkError) {
+      if (isMissingColumnError(checkError)) {
+        throw toAppError("MIGRATION_REQUIRED", checkError);
+      }
+      throw checkError;
+    }
+
+    if (exists && exists.length > 0) {
+      throw toAppError("DUPLICATE_EMPLOYEE");
+    }
+
+    const { data: gift, error: giftError } = await supabaseClient
+      .from("gifts")
+      .select("id,quantity,active")
+      .eq("id", payload.giftId)
+      .eq("active", true)
+      .single();
+
+    if (giftError || !gift) throw toAppError("GIFT_NOT_FOUND", giftError);
+
+    const { count, error: countError } = await supabaseClient
+      .from("gift_selections")
+      .select("id", { head: true, count: "exact" })
+      .eq("gift_id", payload.giftId);
+
+    if (countError) throw countError;
+
+    if ((count || 0) >= Number(gift.quantity || 0)) {
+      throw toAppError("OUT_OF_STOCK");
+    }
+
+    const insertPayload = {
+      employee_name: payload.employeeName,
+      employee_id: employeeId,
+      phone,
+      work_site: payload.workSite,
+      department: payload.department,
+      gift_id: payload.giftId,
+    };
+
+    const { error: insertError } = await supabaseClient
+      .from("gift_selections")
+      .insert(insertPayload);
+
+    if (insertError) {
+      if (insertError.code === "23505") throw toAppError("DUPLICATE_EMPLOYEE", insertError);
+      if (isMissingColumnError(insertError)) throw toAppError("MIGRATION_REQUIRED", insertError);
+      throw insertError;
     }
   }
 
-  function write(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
-  }
+  async function addGift(payload) {
+    let imageUrl = null;
 
-  function uid() {
-    return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-  }
-
-  function gifts() {
-    return read(GIFTS_KEY, []);
-  }
-
-  function selections() {
-    return read(SELECTIONS_KEY, []);
-  }
-
-  function saveGifts(list) {
-    write(GIFTS_KEY, list);
-  }
-
-  function saveSelections(list) {
-    write(SELECTIONS_KEY, list);
-  }
-
-  function selectedCountByGift() {
-    const map = {};
-    for (const s of selections()) {
-      map[s.giftId] = (map[s.giftId] || 0) + 1;
+    if (payload.file) {
+      const ext = String(payload.file.name || "").split(".").pop() || "jpg";
+      const fileName = `${crypto.randomUUID()}.${ext}`;
+      const { error: upErr } = await supabaseClient.storage.from("gift-images").upload(fileName, payload.file);
+      if (upErr) throw upErr;
+      const { data: pub } = supabaseClient.storage.from("gift-images").getPublicUrl(fileName);
+      imageUrl = pub.publicUrl;
     }
-    return map;
+
+    const { error } = await supabaseClient.from("gifts").insert({
+      name: payload.name,
+      description: payload.description || null,
+      quantity: Number(payload.quantity || 0),
+      image_url: imageUrl,
+      active: true,
+    });
+
+    if (error) throw error;
   }
 
-  function giftWithAvailability() {
-    const counts = selectedCountByGift();
-    return gifts().map((g) => ({
-      ...g,
-      selected: counts[g.id] || 0,
-      remaining: Math.max(0, Number(g.quantity || 0) - (counts[g.id] || 0)),
-    }));
+  async function deleteGift(id) {
+    const { error } = await supabaseClient.from("gifts").delete().eq("id", id);
+    if (error) throw error;
   }
 
-  function csvEscape(val) {
-    const s = String(val ?? "");
-    if (s.includes(",") || s.includes("\n") || s.includes('"')) {
-      return '"' + s.replace(/"/g, '""') + '"';
-    }
-    return s;
+  async function clearSelections() {
+    const { error } = await supabaseClient.from("gift_selections").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    if (error) throw error;
   }
 
   function downloadCsv(filename, rows) {
-    const csv = rows.map((r) => r.map(csvEscape).join(",")).join("\n");
+    const esc = (val) => {
+      const s = String(val ?? "");
+      return s.includes(",") || s.includes("\n") || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = rows.map((r) => r.map(esc).join(",")).join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -73,12 +187,13 @@
   }
 
   window.GPP = {
-    uid,
-    gifts,
-    selections,
-    saveGifts,
-    saveSelections,
-    giftWithAvailability,
+    listGifts,
+    listSelections,
+    listGiftAvailability,
+    submitSelection,
+    addGift,
+    deleteGift,
+    clearSelections,
     downloadCsv,
   };
 })();

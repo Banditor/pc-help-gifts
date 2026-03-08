@@ -33,6 +33,14 @@
           <label for="department">מוקד / מחלקה</label>
           <input id="department" required />
         </div>
+        <div class="col-4">
+          <label for="employeeId">תעודת זהות</label>
+          <input id="employeeId" inputmode="numeric" placeholder="9 ספרות" required />
+        </div>
+        <div class="col-4">
+          <label for="phone">טלפון</label>
+          <input id="phone" inputmode="tel" placeholder="0501234567" required />
+        </div>
 
         <div class="col-12">
           <h3>מתנות זמינות</h3>
@@ -47,80 +55,8 @@
     </section>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
-  <script>
-    const form = document.getElementById("worker-form");
-    const giftsGrid = document.getElementById("giftsGrid");
-    const msg = document.getElementById("workerMsg");
-
-    function setMsg(text, isError) {
-      msg.textContent = text;
-      msg.className = "message " + (text ? (isError ? "error" : "success") : "");
-    }
-
-    function renderGifts() {
-      const list = GPP.giftWithAvailability();
-      if (!list.length) {
-        giftsGrid.innerHTML = '<div class="card">אין מתנות כרגע. פנו למנהל.</div>';
-        return;
-      }
-
-      giftsGrid.innerHTML = list.map((g) => {
-        const disabled = g.remaining <= 0;
-        return `
-          <label class="gift-card" style="opacity:${disabled ? "0.65" : "1"};">
-            <img class="gift-image" src="${g.imageDataUrl || "https://placehold.co/600x400/e9eef5/5f6d7a?text=Gift"}" alt="${g.name}" />
-            <div class="gift-content">
-              <input type="radio" name="giftId" value="${g.id}" ${disabled ? "disabled" : ""} ${disabled ? "" : "required"} />
-              <h4 class="gift-title">${g.name}</h4>
-              <div class="muted">${g.description || ""}</div>
-              <div class="badge">נותר: ${g.remaining}</div>
-            </div>
-          </label>`;
-      }).join("");
-    }
-
-    form.addEventListener("submit", (e) => {
-      e.preventDefault();
-      setMsg("", false);
-
-      const employeeName = document.getElementById("employeeName").value.trim();
-      const workSite = document.getElementById("workSite").value.trim();
-      const department = document.getElementById("department").value.trim();
-      const selected = form.querySelector('input[name="giftId"]:checked');
-
-      if (!employeeName || !workSite || !department || !selected) {
-        setMsg("יש למלא את כל השדות ולבחור מתנה.", true);
-        return;
-      }
-
-      const giftId = selected.value;
-      const gift = GPP.gifts().find((g) => g.id === giftId);
-      const availability = GPP.giftWithAvailability().find((g) => g.id === giftId);
-      if (!gift || !availability || availability.remaining <= 0) {
-        setMsg("המתנה אינה זמינה יותר, בחרו מתנה אחרת.", true);
-        renderGifts();
-        return;
-      }
-
-      const list = GPP.selections();
-      list.push({
-        id: GPP.uid(),
-        employeeName,
-        workSite,
-        department,
-        giftId,
-        giftName: gift.name,
-        createdAt: new Date().toISOString(),
-      });
-      GPP.saveSelections(list);
-
-      form.reset();
-      renderGifts();
-      setMsg("הבחירה נשמרה בהצלחה.", false);
-    });
-
-    renderGifts();
-  </script>
+  <script src="worker.js"></script>
 </body>
 </html>
