@@ -141,12 +141,12 @@
     let imageUrl = null;
 
     if (payload.file) {
-      const ext = String(payload.file.name || "").split(".").pop() || "jpg";
-      const fileName = `${crypto.randomUUID()}.${ext}`;
-      const { error: upErr } = await supabaseClient.storage.from("gift-images").upload(fileName, payload.file);
-      if (upErr) throw upErr;
-      const { data: pub } = supabaseClient.storage.from("gift-images").getPublicUrl(fileName);
-      imageUrl = pub.publicUrl;
+      imageUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = reject;
+        reader.readAsDataURL(payload.file);
+      });
     }
 
     const { error } = await supabaseClient.from("gifts").insert({
