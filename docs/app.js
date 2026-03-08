@@ -19,6 +19,39 @@
     return err;
   }
 
+  function fileToOptimizedDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const maxSide = 1280;
+            const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+            const w = Math.max(1, Math.round(img.width * scale));
+            const h = Math.max(1, Math.round(img.height * scale));
+            const canvas = document.createElement("canvas");
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              reject(new Error("Cannot process image"));
+              return;
+            }
+            ctx.drawImage(img, 0, 0, w, h);
+            resolve(canvas.toDataURL("image/jpeg", 0.82));
+          } catch (e) {
+            reject(e);
+          }
+        };
+        img.onerror = reject;
+        img.src = String(reader.result || "");
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
   function isMissingColumnError(error) {
     if (!error) return false;
     return error.code === "42703" || String(error.message || "").includes("employee_id");
@@ -141,12 +174,11 @@
     let imageUrl = null;
 
     if (payload.file) {
-      imageUrl = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ""));
-        reader.onerror = reject;
-        reader.readAsDataURL(payload.file);
-      });
+      try {
+        imageUrl = await fileToOptimizedDataUrl(payload.file);
+      } catch (e) {
+        throw toAppError("IMAGE_PROCESS_FAILED", e);
+      }
     }
 
     const { error } = await supabaseClient.from("gifts").insert({
